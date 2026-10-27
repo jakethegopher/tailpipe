@@ -8,14 +8,15 @@ import (
 
 func main() {
 
-	ln, err := net.Listen("tcp", ":4222")
+	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
 		return
 	}
 	fmt.Println("Listening on port :4222")
-	defer ln.Close()
+	defer listener.Close()
+
 	for {
-		conn, err := ln.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
@@ -23,6 +24,13 @@ func main() {
 		for scanner.Scan() {
 			scannedLine := scanner.Text()
 			fmt.Println(scannedLine)
+			switch scannedLine {
+			case "hi":
+				conn.Write([]byte("hi\n"))
+			case "dupa":
+				conn.Write([]byte("zbita\n"))
+			default:
+			}
 		}
 	}
 }
