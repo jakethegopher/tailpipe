@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 )
 
 func main() {
@@ -20,16 +21,22 @@ func main() {
 		if err != nil {
 			return
 		}
-		scanner := bufio.NewScanner(conn)
-		for scanner.Scan() {
-			scannedLine := scanner.Text()
-			fmt.Println(scannedLine)
-			switch scannedLine {
+		reader := bufio.NewReader(conn)
+		//writer := bufio.NewWriter(conn)
+		for {
+			msg, _, err := reader.ReadLine()
+			if err != nil {
+				os.Exit(1)
+			}
+			fmt.Println(string(msg))
+
+			switch string(msg) {
 			case "hi":
-				conn.Write([]byte("hi\n"))
+				conn.Write([]byte(("Hello there\n")))
 			case "dupa":
-				conn.Write([]byte("zbita\n"))
+				conn.Write([]byte("Zbita\n"))
 			default:
+				conn.Write([]byte("Default response\n"))
 			}
 		}
 	}
