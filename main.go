@@ -1,8 +1,9 @@
 package main
 
 import (
-	"bufio"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -25,18 +26,20 @@ func main() {
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
-	scanner := bufio.NewScanner(conn)
+	lengthBuf := make([]byte, 4)
 innerLoop:
 	for {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				fmt.Print(err)
-			}
-			break
+		if _, err := io.ReadFull(conn, lengthBuf); err != nil {
+			return
 		}
 
-		msg := scanner.Text()
-		fmt.Println(msg)
+		length := binary.BigEndian.Uint32(lengthBuf)
+		msgBuf := make([]byte, length)
+
+		if _, err := io.ReadFull(conn, msgBuf); err != nil {
+			return
+		}
+		msg := string(msgBuf)
 
 		switch msg {
 		case "hi":
