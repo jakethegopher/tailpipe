@@ -7,7 +7,6 @@ import (
 )
 
 func main() {
-
 	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
 		return
@@ -20,32 +19,35 @@ func main() {
 		if err != nil {
 			return
 		}
-		scanner := bufio.NewScanner(conn)
+		go handleClient(conn)
+	}
+}
 
-	innerLoop:
-		for {
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					fmt.Print(err)
-				}
-				break
+func handleClient(conn net.Conn) {
+	defer conn.Close()
+	scanner := bufio.NewScanner(conn)
+innerLoop:
+	for {
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				fmt.Print(err)
 			}
+			break
+		}
 
-			msg := scanner.Text()
-			fmt.Println(msg)
+		msg := scanner.Text()
+		fmt.Println(msg)
 
-			switch msg {
-			case "hi":
-				conn.Write([]byte("Henlo good sir\n"))
-			case "hello there":
-				conn.Write([]byte("General Kenobi...\n"))
-			case "exit":
-				conn.Write([]byte("Exiting connection\n"))
-				conn.Close()
-				break innerLoop
-			default:
-				conn.Write([]byte("You've hit default case good sir\n"))
-			}
+		switch msg {
+		case "hi":
+			conn.Write([]byte("Henlo good sir\n"))
+		case "hello there":
+			conn.Write([]byte("General Kenobi...\n"))
+		case "exit":
+			conn.Write([]byte("Exiting connection\n"))
+			break innerLoop
+		default:
+			conn.Write([]byte("You've hit default case good sir\n"))
 		}
 	}
 }
