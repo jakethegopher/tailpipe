@@ -1,14 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"os/signal"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
 		log.Print(err)
@@ -16,6 +22,12 @@ func main() {
 	}
 	fmt.Println("Listening on port :4222")
 	defer listener.Close()
+
+	go func() {
+		<-ctx.Done()
+		fmt.Println("Closing server with Ctrl - C")
+		listener.Close()
+	}()
 
 	for {
 		conn, err := listener.Accept()
