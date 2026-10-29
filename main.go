@@ -63,7 +63,6 @@ innerLoop:
 			return
 		}
 		msg := string(msgBuf)
-		fmt.Print(msg)
 
 		switch msg {
 		case "hi":
