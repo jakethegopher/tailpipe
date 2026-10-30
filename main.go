@@ -41,10 +41,10 @@ func main() {
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
-	lengthBuf := make([]byte, 4)
+	headerBuf := make([]byte, 4)
 innerLoop:
 	for {
-		if _, err := io.ReadFull(conn, lengthBuf); err != nil {
+		if _, err := io.ReadFull(conn, headerBuf); err != nil {
 			if err == io.EOF {
 				return
 			}
@@ -52,7 +52,7 @@ innerLoop:
 			return
 		}
 
-		length := binary.BigEndian.Uint32(lengthBuf)
+		length := binary.BigEndian.Uint32(headerBuf)
 		msgBuf := make([]byte, length)
 
 		if _, err := io.ReadFull(conn, msgBuf); err != nil {
@@ -66,14 +66,14 @@ innerLoop:
 
 		switch msg {
 		case "hi":
-			conn.Write([]byte("Henlo good sir\n"))
-		case "hello there":
 			conn.Write([]byte("General Kenobi...\n"))
+		case "publish this message to topic":
+
 		case "exit":
 			conn.Write([]byte("Exiting connection\n"))
 			break innerLoop
 		default:
-			conn.Write([]byte("You've hit default case good sir\n"))
+			conn.Write([]byte("Unrecognized prompt has been provided"))
 		}
 	}
 }
