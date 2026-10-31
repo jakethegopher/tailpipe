@@ -11,9 +11,12 @@ import (
 	"os/signal"
 )
 
+const maxCmdLength = 20
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	initTopics()
 
 	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
@@ -53,6 +56,10 @@ innerLoop:
 		}
 
 		length := binary.BigEndian.Uint32(headerBuf)
+		if length > maxCmdLength {
+			log.Printf("Command rejected due to too many bytes.\nAllowed length: %d bytes, cmd length: %d bytes", maxCmdLength, length)
+			return
+		}
 		msgBuf := make([]byte, length)
 
 		if _, err := io.ReadFull(conn, msgBuf); err != nil {
@@ -65,9 +72,11 @@ innerLoop:
 		msg := string(msgBuf)
 
 		switch msg {
-		case "hi":
-			conn.Write([]byte("General Kenobi...\n"))
-		case "publish this message to topic":
+		case "ping":
+			conn.Write([]byte("pong\n"))
+		case "publish to":
+
+		case "subscribe to":
 
 		case "exit":
 			conn.Write([]byte("Exiting connection\n"))
@@ -75,5 +84,13 @@ innerLoop:
 		default:
 			conn.Write([]byte("Unrecognized prompt has been provided"))
 		}
+	}
+}
+
+func initTopics() map[string]*Topic {
+	return map[string]*Topic{
+		"topic1": NewTopic(),
+		"topic2": NewTopic(),
+		"topic3": NewTopic(),
 	}
 }

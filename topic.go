@@ -6,56 +6,36 @@ import (
 )
 
 type Topic struct {
-	name        string
-	messages    []Message
-	subscribers []chan Message
+	subscribers []chan []byte
 	mu          sync.RWMutex
-	nextOffset  int64
-}
-
-type Message struct {
-	Offset int64
-	Data   []byte
 }
 
 func (t *Topic) publish(msg []byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	in := append([]byte(nil), msg...)
-
-	t.messages = append(t.messages, Message{
-		Offset: t.nextOffset,
-		Data:   in,
-	})
-	t.nextOffset++
+	for _, ch := range t.subscribers {
+		ch <- in
+	}
 }
 
-func (t *Topic) read(targetOffset int64, chunkSize int) []Message {
-	if chunkSize <= 0 {
-		return nil
-	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	for index, elem := range t.messages {
-		if elem.Offset >= targetOffset {
-			n := min(len(t.messages)-index, chunkSize)
-			out := make([]Message, n)
-			for i := range n {
-				out[i] = Message{
-					Offset: t.messages[index+i].Offset,
-					Data:   append([]byte(nil), t.messages[index+i].Data...),
-				}
-			}
-			return out
-		}
-	}
-	return nil
+func (t *Topic) subscribe() chan []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	subChan := make(chan []byte, 1)
+	t.subscribers = append(t.subscribers, subChan)
+	return subChan
 }
 
 func (t *Topic) getMetadata() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	metadata := fmt.Sprintf("Topic { \nname: %s\nnextOffset: %d\nmessages size: %d\nsubscribers size: %d\n}", t.name, t.nextOffset, len(t.messages), len(t.subscribers))
+	metadata := fmt.Sprintf("Topic { \nsubscribers size: %d\n}", len(t.subscribers))
 	return metadata
+}
+
+func NewTopic() *Topic {
+	return &Topic{
+		subscribers: make([]chan []byte, 0),
+	}
 }

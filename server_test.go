@@ -34,7 +34,7 @@ func TestRoundTrip(t *testing.T) {
 	defer conn.Close()
 
 	// Send a length-prefixed "hi" — the mirror image of what your server reads.
-	msg := "hi"
+	msg := "ping"
 	lengthBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lengthBuf, uint32(len(msg))) // number → 4 bytes
 	conn.Write(lengthBuf)
@@ -47,7 +47,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(reply[:n])
-	want := "Henlo good sir\n"
+	want := "ping\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want) // Go's "assertEquals"
 	}
