@@ -45,16 +45,16 @@ func main() {
 	}
 }
 
-func handleClient(conn net.Conn, topic *Topic, ctx context.Context) {
+func handleClient(conn net.Conn, topic *Topic, parentCtx context.Context) {
 	defer conn.Close()
-	headerBuf := make([]byte, 4)
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel() // fires when handleClient returns → wakes the subscriber goroutine
 
+	headerBuf := make([]byte, 4)
 innerLoop:
 	for {
 		msg, err := readFrame(conn, headerBuf, maxCmdLength)
 		if err != nil {
-			log.Print(err)
 			return
 		}
 
@@ -65,23 +65,25 @@ innerLoop:
 			conn.Write([]byte("provide msg\n"))
 			cmd, err := readFrame(conn, headerBuf, maxMsgLength)
 			if err != nil {
-				log.Print(err)
 				return
 			}
 			topic.publish(cmd)
 		case "subscribe":
 			subChan := topic.subscribe()
-			for {
-				select {
-					case : _, err := conn.Write(msg)
-					 if err != nil {
+			go func() {
+				for {
+					select {
+					case msg := <-subChan: // a message arrived — deliver it
+						if _, err := conn.Write(msg); err != nil {
+							topic.unsubscribe(subChan)
+							return
+						}
+					case <-ctx.Done(): // client disconnected
 						topic.unsubscribe(subChan)
 						return
 					}
-					case <-ctx.Done()
 				}
-			}
-
+			}()
 		case "exit":
 			conn.Write([]byte("exiting connection\n"))
 			break innerLoop
