@@ -11,6 +11,7 @@ import (
 func TestRoundTrip(t *testing.T) {
 	// ── SERVER side (must run in a goroutine, because Accept() blocks) ──
 	// 127.0.0.1:0 → "listen on loopback, and OS, you pick a free port for me"
+	topic := NewTopic()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +23,7 @@ func TestRoundTrip(t *testing.T) {
 		if err != nil {
 			return
 		}
-		handleClient(conn) // ← YOUR code under test
+		handleClient(conn, topic) // ← YOUR code under test
 	}()
 
 	// ── CLIENT side (the test itself dials in) ──
@@ -47,7 +48,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(reply[:n])
-	want := "ping\n"
+	want := "pong\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want) // Go's "assertEquals"
 	}

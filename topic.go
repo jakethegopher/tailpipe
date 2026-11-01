@@ -27,6 +27,19 @@ func (t *Topic) subscribe() chan []byte {
 	return subChan
 }
 
+func (t *Topic) unsubscribe(subChan chan []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for index, channel := range t.subscribers {
+		if subChan == channel {
+			t.subscribers[index] = t.subscribers[len(t.subscribers)-1]
+			t.subscribers[len(t.subscribers)-1] = nil
+			t.subscribers = t.subscribers[:len(t.subscribers)-1]
+			return
+		}
+	}
+}
+
 func (t *Topic) getMetadata() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
