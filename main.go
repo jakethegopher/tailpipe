@@ -9,11 +9,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 )
 
 const (
-	maxCmdLength = 20
-	maxMsgLength = 1024
+	maxCmdLength = 1024
 )
 
 func main() {
@@ -53,21 +53,19 @@ func handleClient(conn net.Conn, topic *Topic, parentCtx context.Context) {
 	headerBuf := make([]byte, 4)
 innerLoop:
 	for {
-		msg, err := readFrame(conn, headerBuf, maxCmdLength)
+		input, err := readFrame(conn, headerBuf)
 		if err != nil {
 			return
 		}
+		cmd, msg, found := strings.Cut(string(input), " ")
 
-		switch string(msg) {
+		switch cmd {
 		case "ping":
 			conn.Write([]byte("pong\n"))
 		case "publish":
-			conn.Write([]byte("provide msg\n"))
-			cmd, err := readFrame(conn, headerBuf, maxMsgLength)
-			if err != nil {
-				return
+			if found {
+				topic.publish([]byte(msg))
 			}
-			topic.publish(cmd)
 		case "subscribe":
 			subChan := topic.subscribe()
 			go func() {
@@ -88,12 +86,12 @@ innerLoop:
 			conn.Write([]byte("exiting connection\n"))
 			break innerLoop
 		default:
-			conn.Write([]byte("unrecognized prompt has been provided"))
+			conn.Write([]byte("unrecognized prompt has been provided\n"))
 		}
 	}
 }
 
-func readFrame(conn net.Conn, headerBuf []byte, maxLength uint32) ([]byte, error) {
+func readFrame(conn net.Conn, headerBuf []byte) ([]byte, error) {
 	if _, err := io.ReadFull(conn, headerBuf); err != nil {
 		if err == io.EOF {
 			return nil, err
@@ -103,7 +101,7 @@ func readFrame(conn net.Conn, headerBuf []byte, maxLength uint32) ([]byte, error
 	}
 
 	length := binary.BigEndian.Uint32(headerBuf)
-	if length > maxLength {
+	if length > maxCmdLength {
 		log.Print("command rejected due to too many bytes.\n")
 		return nil, fmt.Errorf("length exceeded: %d", length)
 	}
