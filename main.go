@@ -9,17 +9,27 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 )
 
+const maxCmdLength = 1024
 const (
-	maxCmdLength = 1024
+	OpPublish byte = iota
+	OpSubscribe
+	OpUnsubscribe
+	OpPing
+	OpExit
 )
+
+type Frame struct {
+	opcode  byte
+	pattern string
+	message []byte
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	topic := NewTopic()
+	broker := NewBroker()
 
 	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
@@ -41,48 +51,53 @@ func main() {
 			log.Print(err)
 			return
 		}
-		go handleClient(conn, topic, ctx)
+		go handleClient(conn, broker, ctx)
 	}
 }
 
-func handleClient(conn net.Conn, topic *Topic, parentCtx context.Context) {
+func handleClient(conn net.Conn, broker *Broker, sysCtx context.Context) {
 	defer conn.Close()
-	ctx, cancel := context.WithCancel(parentCtx)
+	clientCtx, cancel := context.WithCancel(sysCtx)
 	defer cancel() // fires when handleClient returns → wakes the subscriber goroutine
-
-	headerBuf := make([]byte, 4)
+	var subscriberCtxs []context.CancelFunc
 innerLoop:
 	for {
-		input, err := readFrame(conn, headerBuf)
+		frame, err := readFrame(conn)
 		if err != nil {
 			return
 		}
-		cmd, msg, found := strings.Cut(string(input), " ")
-
-		switch cmd {
-		case "ping":
+		switch frame.opcode {
+		case OpPing:
 			conn.Write([]byte("pong\n"))
-		case "publish":
-			if found {
-				topic.publish([]byte(msg))
+		case OpPublish:
+			if len(frame.message) == 0 {
+				return
 			}
-		case "subscribe":
-			subChan := topic.subscribe()
-			go func() {
+			broker.publish(frame.pattern, frame.message)
+		case OpSubscribe:
+			subCtx, subCancel := context.WithCancel(clientCtx)
+			subChan := broker.subscribe(frame.pattern)
+			subscriberCtxs = append(subscriberCtxs, subCancel)
+
+			go func(subChan chan []byte, ctx context.Context) {
+				defer broker.unsubscribe(subChan)
 				for {
 					select {
 					case msg := <-subChan: // a message arrived — deliver it
 						if _, err := conn.Write(msg); err != nil {
-							topic.unsubscribe(subChan)
 							return
 						}
 					case <-ctx.Done(): // client disconnected
-						topic.unsubscribe(subChan)
 						return
 					}
 				}
-			}()
-		case "exit":
+			}(subChan, subCtx)
+		case OpUnsubscribe:
+			for i := range subscriberCtxs {
+				subscriberCtxs[i]()
+			}
+			subscriberCtxs = nil
+		case OpExit:
 			conn.Write([]byte("exiting connection\n"))
 			break innerLoop
 		default:
@@ -91,28 +106,69 @@ innerLoop:
 	}
 }
 
-func readFrame(conn net.Conn, headerBuf []byte) ([]byte, error) {
-	if _, err := io.ReadFull(conn, headerBuf); err != nil {
+func readFrame(conn net.Conn) (*Frame, error) {
+	// read opcode
+	var opCodeBuf [1]byte
+	if _, err := io.ReadFull(conn, opCodeBuf[:]); err != nil {
 		if err == io.EOF {
 			return nil, err
 		}
 		log.Print(err)
 		return nil, err
 	}
+	opcode := opCodeBuf[0]
 
-	length := binary.BigEndian.Uint32(headerBuf)
-	if length > maxCmdLength {
+	// read pattern len
+	var patternLenBuf [1]byte
+	if _, err := io.ReadFull(conn, patternLenBuf[:]); err != nil {
+		if err == io.EOF {
+			return nil, err
+		}
+		log.Print(err)
+		return nil, err
+	}
+	patternLen := patternLenBuf[0]
+
+	// read pattern
+	patternBuf := make([]byte, patternLen)
+	if _, err := io.ReadFull(conn, patternBuf); err != nil {
+		if err == io.EOF {
+			return nil, err
+		}
+		log.Print(err)
+		return nil, err
+	}
+	pattern := string(patternBuf)
+
+	// read msg len
+	var msgLenBuf [4]byte
+	if _, err := io.ReadFull(conn, msgLenBuf[:]); err != nil {
+		if err == io.EOF {
+			return nil, err
+		}
+		log.Print(err)
+		return nil, err
+	}
+	msgLen := binary.BigEndian.Uint32(msgLenBuf[:])
+
+	if msgLen > maxCmdLength {
 		log.Print("command rejected due to too many bytes.\n")
-		return nil, fmt.Errorf("length exceeded: %d", length)
+		return nil, fmt.Errorf("length exceeded: %d", msgLen)
 	}
-	msgBuf := make([]byte, length)
 
-	if _, err := io.ReadFull(conn, msgBuf); err != nil {
+	// read msg
+	message := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, message); err != nil {
 		if err == io.EOF {
 			return nil, err
 		}
 		log.Print(err)
 		return nil, err
 	}
-	return msgBuf, nil
+
+	return &Frame{
+		opcode:  opcode,
+		pattern: pattern,
+		message: message,
+	}, nil
 }

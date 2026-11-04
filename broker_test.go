@@ -4,7 +4,7 @@ import "testing"
 
 // Task 3: a message published to a topic reaches a subscriber.
 func TestTopicPublishDeliversToSubscriber(t *testing.T) {
-	topic := NewTopic()
+	topic := NewBroker("test")
 	ch := topic.subscribe() // register a subscriber, keep its channel
 
 	topic.publish([]byte("hello"))
@@ -17,7 +17,7 @@ func TestTopicPublishDeliversToSubscriber(t *testing.T) {
 
 // Task 3 (fan-out): one message reaches ALL subscribers, not just the first.
 func TestTopicPublishDeliversToAllSubscribers(t *testing.T) {
-	topic := NewTopic()
+	topic := NewBroker("test")
 	ch1 := topic.subscribe()
 	ch2 := topic.subscribe()
 
@@ -34,7 +34,7 @@ func TestTopicPublishDeliversToAllSubscribers(t *testing.T) {
 // The copy-on-write guarantee: the caller can mutate its buffer after publish
 // without corrupting what subscribers received.
 func TestTopicPublishCopiesData(t *testing.T) {
-	topic := NewTopic()
+	topic := NewBroker("test")
 	ch := topic.subscribe()
 
 	msg := []byte("hello")

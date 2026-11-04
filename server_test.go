@@ -24,7 +24,7 @@ func sendFrame(conn net.Conn, s string) error {
 
 func TestRoundTrip(t *testing.T) {
 	// SERVER side: listen on a random free port, accept in a goroutine.
-	topic := NewTopic()
+	topic := NewBroker("test")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestRoundTrip(t *testing.T) {
 
 // Task 3.5: a single-frame "publish hello" reaches a subscriber.
 func TestPublishDeliversToSubscriber(t *testing.T) {
-	topic := NewTopic()
+	topic := NewBroker("test")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
