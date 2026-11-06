@@ -50,7 +50,11 @@ func (b *Broker) publish(subject string, msg []byte) {
 	in := append([]byte(nil), msg...)
 	for _, subscription := range b.subscribers {
 		if match(subscription.pattern, subject) {
-			subscription.channel <- in
+			select {
+			case subscription.channel <- in:
+			default:
+				//buffer is full, drop the msg
+			}
 		}
 	}
 }

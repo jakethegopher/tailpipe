@@ -92,7 +92,6 @@ innerLoop:
 							return
 						}
 					case <-ctx.Done(): // canceled (unsubscribe, or disconnect via parent)
-						broker.unsubscribe(subChan)
 						return
 					}
 				}
