@@ -1,49 +1,94 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-// Task 3: a message published to a topic reaches a subscriber.
-func TestTopicPublishDeliversToSubscriber(t *testing.T) {
-	topic := NewBroker("test")
-	ch := topic.subscribe() // register a subscriber, keep its channel
+func TestMatch(t *testing.T) {
+	cases := []struct {
+		pattern string
+		subject string
+		want    bool
+	}{
+		{"orders.btc", "orders.btc", true},      // exact match
+		{"orders.*", "orders.btc", true},        // * matches exactly one level
+		{"orders.*", "orders.btc.limit", false}, // * does NOT span levels
+		{"orders.>", "orders.btc.limit", true},  // > matches the rest
+		{"orders.>", "orders", false},           // > needs at least one more level
+		{"orders.*", "orders", false},           // * needs exactly one more level
+		{"foo.bar", "foo.baz", false},           // exact mismatch
+	}
+	for _, c := range cases {
+		if got := match(c.pattern, c.subject); got != c.want {
+			t.Errorf("match(%q, %q) = %v, want %v", c.pattern, c.subject, got, c.want)
+		}
+	}
+}
 
-	topic.publish([]byte("hello"))
+func TestBrokerPublishDeliversToSubscriber(t *testing.T) {
+	b := NewBroker()
+	ch := b.subscribe("orders.btc")
 
-	got := <-ch // read what the subscriber received
-	if string(got) != "hello" {
+	b.publish("orders.btc", []byte("hello"))
+
+	if got := <-ch; string(got) != "hello" {
 		t.Errorf("got %q, want %q", string(got), "hello")
 	}
 }
 
-// Task 3 (fan-out): one message reaches ALL subscribers, not just the first.
-func TestTopicPublishDeliversToAllSubscribers(t *testing.T) {
-	topic := NewBroker("test")
-	ch1 := topic.subscribe()
-	ch2 := topic.subscribe()
+func TestBrokerPublishMatchesWildcard(t *testing.T) {
+	b := NewBroker()
+	ch := b.subscribe("orders.*")
 
-	topic.publish([]byte("hi"))
+	b.publish("orders.btc", []byte("hi"))
+
+	if got := <-ch; string(got) != "hi" {
+		t.Errorf("got %q, want %q", string(got), "hi")
+	}
+}
+
+func TestBrokerPublishDeliversToAllSubscribers(t *testing.T) {
+	b := NewBroker()
+	ch1 := b.subscribe("orders.btc") // exact
+	ch2 := b.subscribe("orders.>")   // wildcard
+
+	b.publish("orders.btc", []byte("hi"))
 
 	for i, ch := range []chan []byte{ch1, ch2} {
-		got := <-ch
-		if string(got) != "hi" {
+		if got := <-ch; string(got) != "hi" {
 			t.Errorf("subscriber %d: got %q, want %q", i, string(got), "hi")
 		}
 	}
 }
 
-// The copy-on-write guarantee: the caller can mutate its buffer after publish
-// without corrupting what subscribers received.
-func TestTopicPublishCopiesData(t *testing.T) {
-	topic := NewBroker("test")
-	ch := topic.subscribe()
+func TestBrokerPublishCopiesData(t *testing.T) {
+	b := NewBroker()
+	ch := b.subscribe("orders.btc")
 
 	msg := []byte("hello")
-	topic.publish(msg)
+	b.publish("orders.btc", msg)
 
 	msg[0] = 'X' // mutate the ORIGINAL slice after publishing
 
-	got := <-ch
-	if string(got) != "hello" {
+	if got := <-ch; string(got) != "hello" {
 		t.Errorf("publish did not copy: got %q, want %q", string(got), "hello")
+	}
+}
+
+func TestBrokerUnsubscribeStopsDelivery(t *testing.T) {
+	b := NewBroker()
+	ch := b.subscribe("orders.btc")
+	b.unsubscribe(ch)
+
+	b.publish("orders.btc", []byte("hi"))
+
+	// The channel should receive nothing. Select with a timeout asserts "no
+	// message arrived within 50ms" — the only way to prove a negative.
+	select {
+	case msg := <-ch:
+		t.Errorf("received message after unsubscribe: %q", msg)
+	case <-time.After(50 * time.Millisecond):
+		// expected: nothing arrives
 	}
 }

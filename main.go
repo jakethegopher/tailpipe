@@ -59,25 +59,29 @@ func handleClient(conn net.Conn, broker *Broker, sysCtx context.Context) {
 	defer conn.Close()
 	clientCtx, cancel := context.WithCancel(sysCtx)
 	defer cancel() // fires when handleClient returns → wakes the subscriber goroutine
-	var subscriberCtxs []context.CancelFunc
+	var subscriberContexts []context.CancelFunc
+
 innerLoop:
 	for {
 		frame, err := readFrame(conn)
 		if err != nil {
 			return
 		}
+
 		switch frame.opcode {
 		case OpPing:
 			conn.Write([]byte("pong\n"))
+
 		case OpPublish:
 			if len(frame.message) == 0 {
-				return
+				return // malformed publish — drop the connection
 			}
 			broker.publish(frame.pattern, frame.message)
+
 		case OpSubscribe:
 			subCtx, subCancel := context.WithCancel(clientCtx)
 			subChan := broker.subscribe(frame.pattern)
-			subscriberCtxs = append(subscriberCtxs, subCancel)
+			subscriberContexts = append(subscriberContexts, subCancel)
 
 			go func(subChan chan []byte, ctx context.Context) {
 				defer broker.unsubscribe(subChan)
@@ -87,19 +91,24 @@ innerLoop:
 						if _, err := conn.Write(msg); err != nil {
 							return
 						}
-					case <-ctx.Done(): // client disconnected
+					case <-ctx.Done(): // canceled (unsubscribe, or disconnect via parent)
+						broker.unsubscribe(subChan)
 						return
 					}
 				}
 			}(subChan, subCtx)
+
 		case OpUnsubscribe:
-			for i := range subscriberCtxs {
-				subscriberCtxs[i]()
+			// Stop every subscription: call each cancel func, then forget them.
+			for i := range subscriberContexts {
+				subscriberContexts[i]()
 			}
-			subscriberCtxs = nil
+			subscriberContexts = nil
+
 		case OpExit:
 			conn.Write([]byte("exiting connection\n"))
 			break innerLoop
+
 		default:
 			conn.Write([]byte("unrecognized prompt has been provided\n"))
 		}
@@ -107,18 +116,18 @@ innerLoop:
 }
 
 func readFrame(conn net.Conn) (*Frame, error) {
-	// read opcode
+	// opcode — 1 byte
 	var opCodeBuf [1]byte
 	if _, err := io.ReadFull(conn, opCodeBuf[:]); err != nil {
 		if err == io.EOF {
-			return nil, err
+			return nil, err // client hung up — normal
 		}
 		log.Print(err)
 		return nil, err
 	}
 	opcode := opCodeBuf[0]
 
-	// read pattern len
+	// pattern length — 1 byte (so a subject is at most 255 bytes)
 	var patternLenBuf [1]byte
 	if _, err := io.ReadFull(conn, patternLenBuf[:]); err != nil {
 		if err == io.EOF {
@@ -129,7 +138,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	patternLen := patternLenBuf[0]
 
-	// read pattern
+	// pattern — patternLen bytes
 	patternBuf := make([]byte, patternLen)
 	if _, err := io.ReadFull(conn, patternBuf); err != nil {
 		if err == io.EOF {
@@ -140,7 +149,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	pattern := string(patternBuf)
 
-	// read msg len
+	// message length — 4 bytes, big-endian
 	var msgLenBuf [4]byte
 	if _, err := io.ReadFull(conn, msgLenBuf[:]); err != nil {
 		if err == io.EOF {
@@ -151,12 +160,13 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	msgLen := binary.BigEndian.Uint32(msgLenBuf[:])
 
+	// Guard against a hostile/garbled length before allocating.
 	if msgLen > maxCmdLength {
 		log.Print("command rejected due to too many bytes.\n")
 		return nil, fmt.Errorf("length exceeded: %d", msgLen)
 	}
 
-	// read msg
+	// message — msgLen bytes
 	message := make([]byte, msgLen)
 	if _, err := io.ReadFull(conn, message); err != nil {
 		if err == io.EOF {

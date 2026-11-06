@@ -10,21 +10,20 @@ import (
 	"go.uber.org/goleak"
 )
 
-// sendFrame writes a single length-prefixed frame to conn.
-// It's the client-side mirror of the server's readFrame.
-func sendFrame(conn net.Conn, s string) error {
-	lengthBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuf, uint32(len(s)))
-	if _, err := conn.Write(lengthBuf); err != nil {
-		return err
-	}
-	_, err := conn.Write([]byte(s))
+func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
+	buf := []byte{opcode}
+	buf = append(buf, byte(len(pattern)))
+	buf = append(buf, pattern...)
+	msgLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgLen, uint32(len(message)))
+	buf = append(buf, msgLen...)
+	buf = append(buf, message...)
+	_, err := conn.Write(buf)
 	return err
 }
 
 func TestRoundTrip(t *testing.T) {
-	// SERVER side: listen on a random free port, accept in a goroutine.
-	topic := NewBroker("test")
+	broker := NewBroker()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -36,20 +35,19 @@ func TestRoundTrip(t *testing.T) {
 		if err != nil {
 			return
 		}
-		handleClient(conn, topic, context.Background())
+		handleClient(conn, broker, context.Background())
 	}()
 
-	// CLIENT side: dial and send "ping".
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := sendFrame(conn, "ping"); err != nil {
+
+	if err := sendFrame(conn, OpPing, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	// Read the reply and assert.
 	reply := make([]byte, 1024)
 	n, err := conn.Read(reply)
 	if err != nil {
@@ -63,9 +61,8 @@ func TestRoundTrip(t *testing.T) {
 	goleak.VerifyNone(t)
 }
 
-// Task 3.5: a single-frame "publish hello" reaches a subscriber.
 func TestPublishDeliversToSubscriber(t *testing.T) {
-	topic := NewBroker("test")
+	broker := NewBroker()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -79,36 +76,35 @@ func TestPublishDeliversToSubscriber(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go handleClient(conn, topic, context.Background())
+			go handleClient(conn, broker, context.Background())
 		}
 	}()
 
-	// Subscriber: connect and send "subscribe".
+	// Subscriber: connect and send "subscribe orders.*".
 	sub, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sub.Close()
-	if err := sendFrame(sub, "subscribe"); err != nil {
+	if err := sendFrame(sub, OpSubscribe, "orders.*", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	// The server doesn't acknowledge "subscribe", so give it a moment to
-	// register the subscriber before publishing. (A sleep — not ideal, but
-	// there's no other sync signal yet.)
+	// The server doesn't acknowledge subscribe, so give it a moment to register.
 	time.Sleep(50 * time.Millisecond)
 
-	// Publisher: connect and send "publish hello" in ONE frame.
+	// Publisher: connect and publish "hello" to "orders.btc" (matches orders.*).
 	pub, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pub.Close()
-	if err := sendFrame(pub, "publish hello"); err != nil {
+	if err := sendFrame(pub, OpPublish, "orders.btc", "hello"); err != nil {
 		t.Fatal(err)
 	}
 
-	// The subscriber should receive "hello" (raw bytes, no newline).
+	// The subscriber should receive "hello" (raw bytes — response framing is a
+	// separate, later concern).
 	reply := make([]byte, 1024)
 	n, err := sub.Read(reply)
 	if err != nil {
