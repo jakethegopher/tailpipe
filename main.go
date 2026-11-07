@@ -3,15 +3,20 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 )
 
-const maxCmdLength = 1024
+const (
+	maxCmdLength  = 1024
+	maxBufferSize = 1024
+)
 const (
 	OpPublish byte = iota
 	OpSubscribe
@@ -114,50 +119,63 @@ innerLoop:
 	}
 }
 
+var BufPool = sync.Pool{
+	New: func() any {
+		return make([]byte, maxBufferSize)
+	},
+}
+
 func readFrame(conn net.Conn) (*Frame, error) {
-	// opcode — 1 byte
-	var opCodeBuf [1]byte
-	if _, err := io.ReadFull(conn, opCodeBuf[:]); err != nil {
+	// Get a reusable byte slice from the pool (capacity: maxCmdLength = 1024 bytes)
+	buffer := BufPool.Get().([]byte)
+	defer BufPool.Put(buffer)
+
+	// 1. opcode — 1 byte (buffer index: 0)
+	if _, err := io.ReadFull(conn, buffer[:1]); err != nil {
 		if err == io.EOF {
 			return nil, err // client hung up — normal
 		}
 		log.Print(err)
 		return nil, err
 	}
-	opcode := opCodeBuf[0]
+	opcode := buffer[0]
 
-	// pattern length — 1 byte (so a subject is at most 255 bytes)
-	var patternLenBuf [1]byte
-	if _, err := io.ReadFull(conn, patternLenBuf[:]); err != nil {
+	// 2. pattern length — 1 byte (buffer index: 1)
+	if _, err := io.ReadFull(conn, buffer[1:2]); err != nil {
 		if err == io.EOF {
 			return nil, err
 		}
 		log.Print(err)
 		return nil, err
 	}
-	patternLen := patternLenBuf[0]
+	patternLen := int(buffer[1])
 
-	// pattern — patternLen bytes
-	patternBuf := make([]byte, patternLen)
-	if _, err := io.ReadFull(conn, patternBuf); err != nil {
+	// 3. pattern — patternLen bytes (buffer range: from index 2 to 2 + patternLen)
+	patternEnd := 2 + patternLen
+	if _, err := io.ReadFull(conn, buffer[2:patternEnd]); err != nil {
 		if err == io.EOF {
 			return nil, err
 		}
 		log.Print(err)
 		return nil, err
 	}
-	pattern := string(patternBuf)
+	pattern := string(buffer[2:patternEnd])
 
-	// message length — 4 bytes, big-endian
-	var msgLenBuf [4]byte
-	if _, err := io.ReadFull(conn, msgLenBuf[:]); err != nil {
+	// 4. message length — 4 bytes, big-endian (buffer range: from patternEnd to patternEnd + 4)
+	msgLenStart := patternEnd
+	msgLenEnd := msgLenStart + 4
+	if msgLenEnd > maxBufferSize {
+		return nil, errors.New("frame header exceeds max limit")
+	}
+
+	if _, err := io.ReadFull(conn, buffer[msgLenStart:msgLenEnd]); err != nil {
 		if err == io.EOF {
 			return nil, err
 		}
 		log.Print(err)
 		return nil, err
 	}
-	msgLen := binary.BigEndian.Uint32(msgLenBuf[:])
+	msgLen := binary.BigEndian.Uint32(buffer[msgLenStart:msgLenEnd])
 
 	// Guard against a hostile/garbled length before allocating.
 	if msgLen > maxCmdLength {
@@ -165,7 +183,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 		return nil, fmt.Errorf("length exceeded: %d", msgLen)
 	}
 
-	// message — msgLen bytes
+	// 5. message — msgLen bytes (allocated separately so it survives pool recycling)
 	message := make([]byte, msgLen)
 	if _, err := io.ReadFull(conn, message); err != nil {
 		if err == io.EOF {
