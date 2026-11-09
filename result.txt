@@ -1,0 +1,15 @@
+goos: windows
+goarch: amd64
+pkg: tailpipe
+cpu: AMD Ryzen 7 9800X3D 8-Core Processor           
+           │   old.txt    │               new.txt               │
+           │    sec/op    │   sec/op     vs base                │
+Publish-16   116.85n ± 6%   64.77n ± 2%  -44.57% (p=0.000 n=10)
+
+           │  old.txt   │              new.txt               │
+           │    B/op    │    B/op     vs base                │
+Publish-16   80.00 ± 0%   16.00 ± 0%  -80.00% (p=0.000 n=10)
+
+           │  old.txt   │              new.txt               │
+           │ allocs/op  │ allocs/op   vs base                │
+Publish-16   3.000 ± 0%   1.000 ± 0%  -66.67% (p=0.000 n=10)

@@ -1,0 +1,16 @@
+goos: windows
+goarch: amd64
+pkg: tailpipe
+cpu: AMD Ryzen 7 9800X3D 8-Core Processor           
+BenchmarkPublish-16    	17649212	        64.54 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	18495854	        67.42 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	18055321	        66.42 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	18276217	        65.43 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	17904648	        64.71 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	18828048	        65.25 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	17740483	        65.69 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	18446270	        65.36 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	22171146	        64.58 ns/op	      16 B/op	       1 allocs/op
+BenchmarkPublish-16    	17907320	        67.35 ns/op	      16 B/op	       1 allocs/op
+PASS
+ok  	tailpipe	14.257s

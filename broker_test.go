@@ -5,6 +5,24 @@ import (
 	"time"
 )
 
+// ===================benchmark===================//
+func BenchmarkPublish(b *testing.B) {
+	broker := NewBroker()
+	ch := broker.subscribe("orders.btc")
+	go func() {
+		for range ch {
+		}
+	}() // drain — see §4 for why
+
+	msg := []byte("hello world")
+
+	b.ResetTimer() // ignore setup time
+	for i := 0; i < b.N; i++ {
+		broker.publish("orders.btc", msg)
+	}
+}
+
+// ===================test===================//
 func TestMatch(t *testing.T) {
 	cases := []struct {
 		pattern string

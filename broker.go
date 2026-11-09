@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 )
 
@@ -24,24 +23,32 @@ type Subscription struct {
 }
 
 func match(pattern, subject string) bool {
-	patternTokens := strings.Split(pattern, levelSeparator)
-	subjectTokens := strings.Split(subject, levelSeparator)
-	i := 0
-	for i < len(patternTokens) {
-		token := patternTokens[i]
-		if token == multiLevelWildcard {
-			return i < len(subjectTokens)
+	pLen, sLen := len(pattern), len(subject)
+	pIdx, sIdx := 0, 0
+	for pIdx < pLen {
+		pEnd := pIdx
+		for pEnd < pLen && pattern[pEnd] != '.' {
+			pEnd++
 		}
-		if i >= len(subjectTokens) {
+		pToken := pattern[pIdx:pEnd]
+		if pToken == ">" {
+			return sIdx <= sLen
+		}
+		if sIdx >= sLen {
 			return false
 		}
-		if token == singleLevelWildcard || token == subjectTokens[i] {
-			i++
-			continue
+		sEnd := sIdx
+		for sEnd < sLen && subject[sEnd] != '.' {
+			sEnd++
 		}
-		return false
+		sToken := subject[sIdx:sEnd]
+		if pToken != "*" && pToken != sToken {
+			return false
+		}
+		pIdx = pEnd + 1
+		sIdx = sEnd + 1
 	}
-	return i == len(subjectTokens)
+	return sIdx > sLen
 }
 
 func (b *Broker) publish(subject string, msg []byte) {
