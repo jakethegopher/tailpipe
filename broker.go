@@ -5,13 +5,6 @@ import (
 	"sync"
 )
 
-const (
-	levelSeparator      = "."
-	singleLevelWildcard = "*"
-	multiLevelWildcard  = ">"
-	systemTopicPrefix   = "$SYS"
-)
-
 type Broker struct {
 	subscribers []Subscription
 	mu          sync.RWMutex
@@ -51,9 +44,14 @@ func match(pattern, subject string) bool {
 	return sIdx > sLen
 }
 
-func (b *Broker) publish(subject string, msg []byte) {
+func (b *Broker) publish(subject string, msg []byte, wal *WAL) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	err := wal.saveToFile(subject, msg)
+	if err != nil {
+		fmt.Print(err)
+		return
+	}
 	in := append([]byte(nil), msg...)
 	for _, subscription := range b.subscribers {
 		if match(subscription.pattern, subject) {

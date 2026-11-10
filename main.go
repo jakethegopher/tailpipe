@@ -27,7 +27,7 @@ const (
 
 type Frame struct {
 	opcode  byte
-	pattern string
+	subject string
 	message []byte
 }
 
@@ -35,6 +35,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	broker := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 
 	listener, err := net.Listen("tcp", ":4222")
 	if err != nil {
@@ -56,11 +58,11 @@ func main() {
 			log.Print(err)
 			return
 		}
-		go handleClient(conn, broker, ctx)
+		go handleClient(conn, broker, ctx, wal)
 	}
 }
 
-func handleClient(conn net.Conn, broker *Broker, sysCtx context.Context) {
+func handleClient(conn net.Conn, broker *Broker, sysCtx context.Context, wal *WAL) {
 	defer conn.Close()
 	clientCtx, cancel := context.WithCancel(sysCtx)
 	defer cancel() // fires when handleClient returns → wakes the subscriber goroutine
@@ -81,11 +83,11 @@ innerLoop:
 			if len(frame.message) == 0 {
 				return // malformed publish — drop the connection
 			}
-			broker.publish(frame.pattern, frame.message)
+			broker.publish(frame.subject, frame.message, wal)
 
 		case OpSubscribe:
 			subCtx, subCancel := context.WithCancel(clientCtx)
-			subChan := broker.subscribe(frame.pattern)
+			subChan := broker.subscribe(frame.subject)
 			subscriberContexts = append(subscriberContexts, subCancel)
 
 			go func(subChan chan []byte, ctx context.Context) {
@@ -126,7 +128,7 @@ var BufPool = sync.Pool{
 }
 
 func readFrame(conn net.Conn) (*Frame, error) {
-	// Get a reusable byte slice from the pool (capacity: maxCmdLength = 1024 bytes)
+	// Get a reusable byte slice from the pool (capacity: maxBufferSize = 1024 bytes)
 	buffer := BufPool.Get().([]byte)
 	defer BufPool.Put(buffer)
 
@@ -195,7 +197,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 
 	return &Frame{
 		opcode:  opcode,
-		pattern: pattern,
+		subject: pattern,
 		message: message,
 	}, nil
 }

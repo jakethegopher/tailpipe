@@ -8,6 +8,8 @@ import (
 // ===================benchmark===================//
 func BenchmarkPublish(b *testing.B) {
 	broker := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	ch := broker.subscribe("orders.btc")
 	go func() {
 		for range ch {
@@ -18,7 +20,7 @@ func BenchmarkPublish(b *testing.B) {
 
 	b.ResetTimer() // ignore setup time
 	for i := 0; i < b.N; i++ {
-		broker.publish("orders.btc", msg)
+		broker.publish("orders.btc", msg, wal)
 	}
 }
 
@@ -46,9 +48,11 @@ func TestMatch(t *testing.T) {
 
 func TestBrokerPublishDeliversToSubscriber(t *testing.T) {
 	b := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	ch := b.subscribe("orders.btc")
 
-	b.publish("orders.btc", []byte("hello"))
+	b.publish("orders.btc", []byte("hello"), wal)
 
 	if got := <-ch; string(got) != "hello" {
 		t.Errorf("got %q, want %q", string(got), "hello")
@@ -57,9 +61,12 @@ func TestBrokerPublishDeliversToSubscriber(t *testing.T) {
 
 func TestBrokerPublishMatchesWildcard(t *testing.T) {
 	b := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
+
 	ch := b.subscribe("orders.*")
 
-	b.publish("orders.btc", []byte("hi"))
+	b.publish("orders.btc", []byte("hi"), wal)
 
 	if got := <-ch; string(got) != "hi" {
 		t.Errorf("got %q, want %q", string(got), "hi")
@@ -68,10 +75,12 @@ func TestBrokerPublishMatchesWildcard(t *testing.T) {
 
 func TestBrokerPublishDeliversToAllSubscribers(t *testing.T) {
 	b := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	ch1 := b.subscribe("orders.btc") // exact
 	ch2 := b.subscribe("orders.>")   // wildcard
 
-	b.publish("orders.btc", []byte("hi"))
+	b.publish("orders.btc", []byte("hi"), wal)
 
 	for i, ch := range []chan []byte{ch1, ch2} {
 		if got := <-ch; string(got) != "hi" {
@@ -82,10 +91,12 @@ func TestBrokerPublishDeliversToAllSubscribers(t *testing.T) {
 
 func TestBrokerPublishCopiesData(t *testing.T) {
 	b := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	ch := b.subscribe("orders.btc")
 
 	msg := []byte("hello")
-	b.publish("orders.btc", msg)
+	b.publish("orders.btc", msg, wal)
 
 	msg[0] = 'X' // mutate the ORIGINAL slice after publishing
 
@@ -96,10 +107,12 @@ func TestBrokerPublishCopiesData(t *testing.T) {
 
 func TestBrokerUnsubscribeStopsDelivery(t *testing.T) {
 	b := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	ch := b.subscribe("orders.btc")
 	b.unsubscribe(ch)
 
-	b.publish("orders.btc", []byte("hi"))
+	b.publish("orders.btc", []byte("hi"), wal)
 
 	// The channel should receive nothing. Select with a timeout asserts "no
 	// message arrived within 50ms" — the only way to prove a negative.

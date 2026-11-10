@@ -24,6 +24,8 @@ func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
 
 func TestRoundTrip(t *testing.T) {
 	broker := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +37,7 @@ func TestRoundTrip(t *testing.T) {
 		if err != nil {
 			return
 		}
-		handleClient(conn, broker, context.Background())
+		handleClient(conn, broker, context.Background(), wal)
 	}()
 
 	conn, err := net.Dial("tcp", listener.Addr().String())
@@ -63,6 +65,8 @@ func TestRoundTrip(t *testing.T) {
 
 func TestPublishDeliversToSubscriber(t *testing.T) {
 	broker := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +80,7 @@ func TestPublishDeliversToSubscriber(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go handleClient(conn, broker, context.Background())
+			go handleClient(conn, broker, context.Background(), wal)
 		}
 	}()
 
