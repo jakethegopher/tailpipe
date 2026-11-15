@@ -25,6 +25,15 @@ const (
 	OpExit
 )
 
+// Response opcodes. Offset by 0x80 so they never collide
+const (
+	RespAck  byte = 0x80 // publish durably stored
+	RespMsg  byte = 0x81 // a delivered message
+	RespPong byte = 0x82 // ping reply
+	RespInfo byte = 0x83 // generic notice (exit)
+	RespErr  byte = 0x84 // an error occurred
+)
+
 type Frame struct {
 	opcode  byte
 	subject string
@@ -64,8 +73,9 @@ func main() {
 
 func handleClient(conn net.Conn, broker *Broker, sysCtx context.Context, wal *WAL) {
 	defer conn.Close()
+	cw := newConnectionWriter(conn)
 	clientCtx, cancel := context.WithCancel(sysCtx)
-	defer cancel() // fires when handleClient returns → wakes the subscriber goroutine
+	defer cancel() // fires when handleClient returns -> wakes subscriber goroutine
 	var subscriberContexts []context.CancelFunc
 
 innerLoop:
@@ -77,13 +87,17 @@ innerLoop:
 
 		switch frame.opcode {
 		case OpPing:
-			conn.Write([]byte("pong\n"))
+			cw.write(RespPong, []byte("pong"))
 
 		case OpPublish:
 			if len(frame.message) == 0 {
-				return // malformed publish — drop the connection
+				return // malformed publish - drop the connection
 			}
-			broker.publish(frame.subject, frame.message, wal)
+			if err := broker.publish(frame.subject, frame.message, wal); err != nil {
+				cw.write(RespErr, []byte(err.Error()))
+				return
+			}
+			cw.write(RespAck, nil)
 
 		case OpSubscribe:
 			subCtx, subCancel := context.WithCancel(clientCtx)
@@ -95,7 +109,7 @@ innerLoop:
 				for {
 					select {
 					case msg := <-subChan: // a message arrived — deliver it
-						if _, err := conn.Write(msg); err != nil {
+						if err := cw.write(RespMsg, msg); err != nil {
 							return
 						}
 					case <-ctx.Done(): // canceled (unsubscribe, or disconnect via parent)
@@ -105,18 +119,18 @@ innerLoop:
 			}(subChan, subCtx)
 
 		case OpUnsubscribe:
-			// Stop every subscription: call each cancel func, then forget them.
+			// call each cancel func, then forget them.
 			for i := range subscriberContexts {
 				subscriberContexts[i]()
 			}
 			subscriberContexts = nil
 
 		case OpExit:
-			conn.Write([]byte("exiting connection\n"))
+			cw.write(RespInfo, []byte("exiting connection"))
 			break innerLoop
 
 		default:
-			conn.Write([]byte("unrecognized prompt has been provided\n"))
+			cw.write(RespErr, []byte("unrecognized opcode"))
 		}
 	}
 }
@@ -128,21 +142,21 @@ var BufPool = sync.Pool{
 }
 
 func readFrame(conn net.Conn) (*Frame, error) {
-	// Get a reusable byte slice from the pool (capacity: maxBufferSize = 1024 bytes)
+	// reusable byte slice from the pool with capacity: maxBufferSize
 	buffer := BufPool.Get().([]byte)
 	defer BufPool.Put(buffer)
 
-	// 1. opcode — 1 byte (buffer index: 0)
+	// opcode - 1 byte at buffer index: 0
 	if _, err := io.ReadFull(conn, buffer[:1]); err != nil {
 		if err == io.EOF {
-			return nil, err // client hung up — normal
+			return nil, err // client hung up - normal
 		}
 		log.Print(err)
 		return nil, err
 	}
 	opcode := buffer[0]
 
-	// 2. pattern length — 1 byte (buffer index: 1)
+	// pattern length - 1 byte at buffer index: 1
 	if _, err := io.ReadFull(conn, buffer[1:2]); err != nil {
 		if err == io.EOF {
 			return nil, err
@@ -152,7 +166,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	patternLen := int(buffer[1])
 
-	// 3. pattern — patternLen bytes (buffer range: from index 2 to 2 + patternLen)
+	// pattern - patternLen bytes buffer range: from index 2 to 2 + patternLen
 	patternEnd := 2 + patternLen
 	if _, err := io.ReadFull(conn, buffer[2:patternEnd]); err != nil {
 		if err == io.EOF {
@@ -163,7 +177,7 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	pattern := string(buffer[2:patternEnd])
 
-	// 4. message length — 4 bytes, big-endian (buffer range: from patternEnd to patternEnd + 4)
+	// message length - 4 bytes, bigendian buffer range: from patternEnd to patternEnd + 4
 	msgLenStart := patternEnd
 	msgLenEnd := msgLenStart + 4
 	if msgLenEnd > maxBufferSize {
@@ -179,13 +193,13 @@ func readFrame(conn net.Conn) (*Frame, error) {
 	}
 	msgLen := binary.BigEndian.Uint32(buffer[msgLenStart:msgLenEnd])
 
-	// Guard against a hostile/garbled length before allocating.
+	// guard against a hostile length before allocating
 	if msgLen > maxCmdLength {
 		log.Print("command rejected due to too many bytes.\n")
 		return nil, fmt.Errorf("length exceeded: %d", msgLen)
 	}
 
-	// 5. message — msgLen bytes (allocated separately so it survives pool recycling)
+	// message - msgLen bytes
 	message := make([]byte, msgLen)
 	if _, err := io.ReadFull(conn, message); err != nil {
 		if err == io.EOF {
@@ -200,4 +214,28 @@ func readFrame(conn net.Conn) (*Frame, error) {
 		subject: pattern,
 		message: message,
 	}, nil
+}
+
+
+type connectionWriter struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+func newConnectionWriter(conn net.Conn) *connectionWriter {
+	return &connectionWriter{conn: conn}
+}
+
+func (cw *connectionWriter) write(opcode byte, payload []byte) error {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+
+	buf := make([]byte, 0, 5+len(payload))
+	buf = append(buf, opcode)
+	l := make([]byte, 4)
+	binary.BigEndian.PutUint32(l, uint32(len(payload)))
+	buf = append(buf, l...)
+	buf = append(buf, payload...)
+	_, err := cw.conn.Write(buf)
+	return err
 }

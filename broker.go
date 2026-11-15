@@ -44,13 +44,11 @@ func match(pattern, subject string) bool {
 	return sIdx > sLen
 }
 
-func (b *Broker) publish(subject string, msg []byte, wal *WAL) {
+func (b *Broker) publish(subject string, msg []byte, wal *WAL) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	err := wal.saveToFile(subject, msg)
-	if err != nil {
-		fmt.Print(err)
-		return
+	if err := wal.saveToFile(subject, msg); err != nil {
+		return err
 	}
 	in := append([]byte(nil), msg...)
 	for _, subscription := range b.subscribers {
@@ -58,10 +56,11 @@ func (b *Broker) publish(subject string, msg []byte, wal *WAL) {
 			select {
 			case subscription.channel <- in:
 			default:
-				//buffer is full, drop the msg
+				// buffer is full, drop the msg
 			}
 		}
 	}
+	return nil
 }
 
 func (b *Broker) subscribe(pattern string) chan []byte {

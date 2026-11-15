@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -10,6 +11,9 @@ import (
 	"go.uber.org/goleak"
 )
 
+// sendFrame encodes ONE request frame in the wire format and writes it to conn:
+// [opcode][pattern-len][pattern][msg-len][msg]. It is the client-side mirror of
+// readFrame (main.go).
 func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
 	buf := []byte{opcode}
 	buf = append(buf, byte(len(pattern)))
@@ -20,6 +24,24 @@ func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
 	buf = append(buf, message...)
 	_, err := conn.Write(buf)
 	return err
+}
+
+// readResponse decodes ONE response frame: [opcode][4-byte len][payload].
+// It is the client-side mirror of connectionWriter.write (main.go).
+func readResponse(conn net.Conn) (byte, []byte, error) {
+	var op [1]byte
+	if _, err := io.ReadFull(conn, op[:]); err != nil {
+		return 0, nil, err
+	}
+	var l [4]byte
+	if _, err := io.ReadFull(conn, l[:]); err != nil {
+		return 0, nil, err
+	}
+	payload := make([]byte, binary.BigEndian.Uint32(l[:]))
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return 0, nil, err
+	}
+	return op[0], payload, nil
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -50,13 +72,12 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reply := make([]byte, 1024)
-	n, err := conn.Read(reply)
+	op, payload, err := readResponse(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(reply[:n]), "pong\n"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if op != RespPong || string(payload) != "pong" {
+		t.Errorf("got op=%#x payload=%q, want RespPong + \"pong\"", op, payload)
 	}
 
 	conn.Close()
@@ -107,14 +128,12 @@ func TestPublishDeliversToSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The subscriber should receive "hello" (raw bytes — response framing is a
-	// separate, later concern).
-	reply := make([]byte, 1024)
-	n, err := sub.Read(reply)
+	// The subscriber receives the message, framed as RespMsg.
+	op, payload, err := readResponse(sub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(reply[:n]), "hello"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if op != RespMsg || string(payload) != "hello" {
+		t.Errorf("got op=%#x payload=%q, want RespMsg + \"hello\"", op, payload)
 	}
 }

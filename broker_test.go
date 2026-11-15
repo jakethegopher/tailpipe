@@ -14,7 +14,7 @@ func BenchmarkPublish(b *testing.B) {
 	go func() {
 		for range ch {
 		}
-	}() // drain — see §4 for why
+	}() // drain the channel to avoid blocking the benchmark
 
 	msg := []byte("hello world")
 
