@@ -47,7 +47,7 @@ func match(pattern, subject string) bool {
 func (b *Broker) publish(subject string, msg []byte, wal *WAL) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if err := wal.saveToFile(subject, msg); err != nil {
+	if err := wal.appendRecord(subject, msg); err != nil {
 		return err
 	}
 	in := append([]byte(nil), msg...)

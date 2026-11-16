@@ -4,49 +4,126 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
-	"sync"
+	"time"
 )
 
-const walFileName = "systemlog.txt"
+const (
+	walFileName = "systemlog.txt"
+
+	walBatchSize = 64 * 1024
+
+	walFlushInterval = 5 * time.Millisecond
+)
 
 type Record struct {
 	Subject string
 	Msg     []byte
 }
 
-
-type WAL struct {
-	mu   sync.Mutex
-	file *os.File
+type writeReq struct {
+	record []byte
+	done   chan error 
 }
 
+
+type WAL struct {
+	file   *os.File
+	writes chan writeReq
+	stop   chan struct{}
+	done   chan struct{}
+}
 
 func NewWAL() *WAL {
 	f, err := os.OpenFile(walFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
 	}
-	return &WAL{file: f}
+	w := &WAL{
+		file:   f,
+		writes: make(chan writeReq, 1024),
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	go w.run()
+	return w
 }
 
 func (w *WAL) Close() {
+	close(w.stop)
+	<-w.done
 	w.file.Close()
 }
 
-func (w *WAL) saveToFile(subject string, msg []byte) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+
+func (w *WAL) appendRecord(subject string, msg []byte) error {
+	done := make(chan error, 1)
+	w.writes <- writeReq{record: encodeRecord(subject, msg), done: done}
+	return <-done
+}
+
+
+func encodeRecord(subject string, msg []byte) []byte {
 	buf := []byte{byte(len(subject))}
 	buf = append(buf, subject...)
-	msgLen := make([]byte, 4) 
+	msgLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(msgLen, uint32(len(msg)))
 	buf = append(buf, msgLen...)
 	buf = append(buf, msg...)
+	return buf
+}
 
-	if _, err := w.file.Write(buf); err != nil {
+func (w *WAL) run() {
+	defer close(w.done)
+	ticker := time.NewTicker(walFlushInterval)
+	defer ticker.Stop()
+
+	var batch []byte
+	var pending []chan error
+
+	flush := func() {
+		if len(pending) == 0 {
+			return
+		}
+		err := w.writeBatch(batch)
+		for _, ch := range pending {
+			ch <- err
+		}
+		batch = batch[:0]
+		pending = pending[:0]
+	}
+
+	for {
+		select {
+		case req := <-w.writes:
+			batch = append(batch, req.record...)
+			pending = append(pending, req.done)
+			if len(batch) >= walBatchSize {
+				flush()
+			}
+
+		case <-ticker.C:
+			flush()
+
+		case <-w.stop:
+			for {
+				select {
+				case req := <-w.writes:
+					batch = append(batch, req.record...)
+					pending = append(pending, req.done)
+				default:
+					flush()
+					return
+				}
+			}
+		}
+	}
+}
+
+func (w *WAL) writeBatch(batch []byte) error {
+	if _, err := w.file.Write(batch); err != nil {
 		return err
 	}
-	return w.file.Sync() // commit file changes
+	return w.file.Sync()
 }
 
 

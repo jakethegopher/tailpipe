@@ -27,11 +27,11 @@ const (
 
 // Response opcodes. Offset by 0x80 so they never collide
 const (
-	RespAck  byte = 0x80 // publish durably stored
-	RespMsg  byte = 0x81 // a delivered message
-	RespPong byte = 0x82 // ping reply
-	RespInfo byte = 0x83 // generic notice (exit)
-	RespErr  byte = 0x84 // an error occurred
+	RespAck  byte = 0x80
+	RespMsg  byte = 0x81
+	RespPong byte = 0x82
+	RespInfo byte = 0x83
+	RespErr  byte = 0x84
 )
 
 type Frame struct {
@@ -215,7 +215,6 @@ func readFrame(conn net.Conn) (*Frame, error) {
 		message: message,
 	}, nil
 }
-
 
 type connectionWriter struct {
 	mu   sync.Mutex

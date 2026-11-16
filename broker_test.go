@@ -18,10 +18,32 @@ func BenchmarkPublish(b *testing.B) {
 
 	msg := []byte("hello world")
 
-	b.ResetTimer() // ignore setup time
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		broker.publish("orders.btc", msg, wal)
 	}
+}
+
+func BenchmarkPublishParallel(b *testing.B) {
+	broker := NewBroker()
+	wal := NewWAL()
+	defer wal.Close()
+	ch := broker.subscribe("orders.btc")
+	go func() {
+		for range ch {
+		}
+	}()
+
+	msg := []byte("hello world")
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if err := broker.publish("orders.btc", msg, wal); err != nil {
+				panic(err)
+			}
+		}
+	})
 }
 
 // ===================test===================//
@@ -114,8 +136,6 @@ func TestBrokerUnsubscribeStopsDelivery(t *testing.T) {
 
 	b.publish("orders.btc", []byte("hi"), wal)
 
-	// The channel should receive nothing. Select with a timeout asserts "no
-	// message arrived within 50ms" — the only way to prove a negative.
 	select {
 	case msg := <-ch:
 		t.Errorf("received message after unsubscribe: %q", msg)
