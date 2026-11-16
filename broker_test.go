@@ -18,8 +18,8 @@ func BenchmarkPublish(b *testing.B) {
 
 	msg := []byte("hello world")
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	
+	for b.Loop() {
 		broker.publish("orders.btc", msg, wal)
 	}
 }

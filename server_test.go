@@ -11,9 +11,6 @@ import (
 	"go.uber.org/goleak"
 )
 
-// sendFrame encodes ONE request frame in the wire format and writes it to conn:
-// [opcode][pattern-len][pattern][msg-len][msg]. It is the client-side mirror of
-// readFrame (main.go).
 func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
 	buf := []byte{opcode}
 	buf = append(buf, byte(len(pattern)))
@@ -26,8 +23,7 @@ func sendFrame(conn net.Conn, opcode byte, pattern, message string) error {
 	return err
 }
 
-// readResponse decodes ONE response frame: [opcode][4-byte len][payload].
-// It is the client-side mirror of connectionWriter.write (main.go).
+
 func readResponse(conn net.Conn) (byte, []byte, error) {
 	var op [1]byte
 	if _, err := io.ReadFull(conn, op[:]); err != nil {

@@ -23,15 +23,15 @@ func crashChild() {
 		os.Exit(1)
 	}
 	fmt.Println("ready")
-	select {} // block forever - the parent kills child
+	select {}
 }
 
 func TestWALSurvivesSIGKILL(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping subprocess kill test in -short mode")
 	}
-	os.Remove(walFileName)
-	defer os.Remove(walFileName)
+	os.RemoveAll(walDir)
+	defer os.RemoveAll(walDir)
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -61,7 +61,7 @@ func TestWALSurvivesSIGKILL(t *testing.T) {
 	}
 	cmd.Wait()
 
-	records, err := replay(walFileName)
+	records, err := replay()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +71,8 @@ func TestWALSurvivesSIGKILL(t *testing.T) {
 }
 
 func TestReplayRecoversRecords(t *testing.T) {
-	os.Remove(walFileName)
-	defer os.Remove(walFileName)
+	os.RemoveAll(walDir)
+	defer os.RemoveAll(walDir)
 
 	wal := NewWAL()
 	defer wal.Close()
@@ -84,7 +84,7 @@ func TestReplayRecoversRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	records, err := replay(walFileName)
+	records, err := replay()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,20 +100,48 @@ func TestReplayRecoversRecords(t *testing.T) {
 }
 
 func TestRecordsSurviveWithoutClose(t *testing.T) {
-	os.Remove(walFileName)
-	defer os.Remove(walFileName)
+	os.RemoveAll(walDir)
+	defer os.RemoveAll(walDir)
 
 	wal := NewWAL()
 	if err := wal.appendRecord("orders.btc", []byte("durable")); err != nil {
 		t.Fatal(err)
 	}
-	// No wal.Close() - simulate a crash. fsync already flushed to disk
+	// No wal.Close() here - simulate a crash. fsync already flushed to disk.
 
-	records, err := replay(walFileName)
+	records, err := replay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(records) != 1 || records[0].Subject != "orders.btc" || string(records[0].Msg) != "durable" {
 		t.Errorf("record not recovered after crash: %+v", records)
+	}
+}
+
+func TestRotationBoundsDisk(t *testing.T) {
+	os.RemoveAll(walDir)
+	defer os.RemoveAll(walDir)
+
+	wal := NewWAL()
+	defer wal.Close()
+
+	big := make([]byte, 64*1024) // one 64 KB record per batch
+	for i := 0; i < 20; i++ {
+		if err := wal.appendRecord("orders.btc", big); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	segs := listSegments()
+	if len(segs) > maxSegments {
+		t.Fatalf("disk not bounded: %d segments, want <= %d", len(segs), maxSegments)
+	}
+
+	records, err := replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) == 0 {
+		t.Fatal("no records recovered after rotation")
 	}
 }

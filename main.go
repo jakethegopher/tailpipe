@@ -108,7 +108,7 @@ innerLoop:
 				defer broker.unsubscribe(subChan)
 				for {
 					select {
-					case msg := <-subChan: // a message arrived — deliver it
+					case msg := <-subChan: // a message arrived - deliver it
 						if err := cw.write(RespMsg, msg); err != nil {
 							return
 						}
